@@ -1,3 +1,5 @@
 *.csv
 *.json
 *.DS_*
+*.xls
+*.xlsx
