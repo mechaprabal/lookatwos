@@ -7,25 +7,36 @@ import math
 import random
 from typing import Dict, List, Any, Set
 
+from dotenv import load_dotenv
+
+
 # ==================================================
 # USER CONFIG
 # ==================================================
 
-API_KEY = "REMOVED_API_KEY"  # <-- use a valid key
+load_dotenv()
+
+API_KEY = os.getenv("jc_wos_key_inst_ucd")
+
 BASE_URL = "https://api.clarivate.com/apis/wos-starter/v2/documents"
 
-QUERY = 'TI=("Continual Learning") AND PY=2021-2026 AND DT=(Article OR Review)'
+QUERY = 'TS=("Federated Continual Learning") AND PY=2021-2026'
+# 'TI=("Continual Learning") AND PY=2021-2026 AND DT=(Article OR Review)'
 QUERY = " ".join(QUERY.split())  # normalize whitespace
 
 DB = "WOS"
 LIMIT = 50  # Starter max
-BASE_SLEEP = 1.5  # base delay between successful calls
-MAX_RETRIES = 6  # retries per page
+BASE_SLEEP = 1.1  # base delay between successful calls
+MAX_RETRIES = 5  # retries per page
 REQUEST_TIMEOUT = 60  # seconds
 
-OUTPUT_FILE = "wos_results_v2.csv"
-CHECKPOINT_FILE = "progress.json"
-UID_CACHE_FILE = "uid_cache.json"  # optional de-duplication across restarts
+query_num = "aaaaaaq1-fcl-wos-20260217"
+
+OUTPUT_FILE = f"{query_num}-wos.csv"
+CHECKPOINT_FILE = f"progress-{query_num}.json"
+UID_CACHE_FILE = (
+    f"uid_cache-{query_num}.json"  # optional de-duplication across restarts
+)
 
 
 # ==================================================
@@ -80,6 +91,7 @@ def parse_record(rec: Dict[str, Any]) -> Dict[str, Any]:
     # source info
     source_block = rec.get("source", {})
     out["source_title"] = source_block.get("sourceTitle")
+    # out["sourceTypes"] = rec.get("sourceTypes")
     out["publish_year"] = source_block.get("publishYear")
     out["publish_month"] = source_block.get("publishMonth")
     out["volume"] = source_block.get("volume")
@@ -90,6 +102,13 @@ def parse_record(rec: Dict[str, Any]) -> Dict[str, Any]:
         out["pages"] = pages_block.get("range") or pages_block.get("count")
     else:
         out["pages"] = None
+
+    # Source Types (e.g., Journal; Proceedings Paper)
+    source_types_list = rec.get("sourceTypes", [])
+    if isinstance(source_types_list, list):
+        out["source_types"] = "; ".join(source_types_list)
+    else:
+        out["source_types"] = str(source_types_list)
 
     # identifiers
     identifiers = rec.get("identifiers", {})
@@ -161,19 +180,36 @@ def request_with_retry(
         if resp.status_code == 200:
             return resp
 
-        # rate limited
         if resp.status_code == 429:
             retry_after = resp.headers.get("Retry-After")
-            sleep = (
-                float(retry_after)
-                if retry_after
-                else min(60, (2**attempt)) + random.uniform(0, 0.5)
-            )
+            print(f"System Retry Ban: {float(retry_after)/3600}")
+
+            if retry_after:
+                retry_after = float(retry_after)
+                # ⭐ cap sleep to avoid multi-hour blocking
+                sleep = min(retry_after, 60)
+            else:
+                sleep = min(60, (2**attempt)) + random.uniform(0, 0.5)
+
             print(
                 f"[WARN] 429 Rate limited | sleeping {sleep:.2f}s (attempt {attempt}/{MAX_RETRIES})"
             )
             time.sleep(sleep)
             continue
+
+        # # rate limited
+        # if resp.status_code == 429:
+        #     retry_after = resp.headers.get("Retry-After")
+        #     sleep = (
+        #         float(retry_after)
+        #         if retry_after
+        #         else min(60, (2**attempt)) + random.uniform(0, 0.5)
+        #     )
+        #     print(
+        #         f"[WARN] 429 Rate limited | sleeping {sleep:.2f}s (attempt {attempt}/{MAX_RETRIES})"
+        #     )
+        #     time.sleep(sleep)
+        #     continue
 
         # transient server errors
         if resp.status_code >= 500:
